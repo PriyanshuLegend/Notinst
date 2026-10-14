@@ -1,0 +1,13 @@
+# Swift Package Manager build artifacts
+.build/
+Packages/
+Package.pins
+Package.resolved
+*.xcodeproj
+*.xcworkspace
+
+# xtool temporary build files
+.xtool/
+.bsp/
+*.ipa
+*.app

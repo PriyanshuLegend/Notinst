@@ -1,0 +1,4 @@
+version: 1
+bundleID: com.notinst.ios
+product: Notinst
+infoPath: Info.plist
