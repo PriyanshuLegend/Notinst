@@ -2,8 +2,8 @@
 // ==UserScript==
 // @name         Notinst — Distraction-Free Instagram
 // @namespace    https://notinst.local/
-// @version      1.2.2
-// @description  Eliminate Reels, Explore discovery loops, sponsored ads, and algorithmic suggested posts while preserving followed feeds, Stories, DMs, profiles, and search. Safe, non-destructive mobile UI alignment with live diagnostics.
+// @version      1.2.3
+// @description  Eliminate Reels, Explore discovery loops, sponsored ads, and algorithmic suggested posts while preserving followed feeds, Stories, DMs, profiles, and search. Precision 3-icon bottom navigation (Home, DMs, Profile) with live diagnostics.
 // @author       Notinst
 // @match        https://*.instagram.com/*
 // @grant        GM_getValue
@@ -13,15 +13,16 @@
 // ==/UserScript==
 
 /**
- * Notinst Instagram Firewall — Safari Userscript v1.2.2
+ * Notinst Instagram Firewall — Safari Userscript v1.2.3
  *
  * Core Principles:
  * 1. Safe & Non-Destructive: Never hide or mutate common ancestors, main feed wrappers, or Stories trays.
- * 2. Search & DMs Preserved: Keep /explore/search/, hashtag lookups, and native Direct Messages intact.
- * 3. Scoped Navigation Engine: Only adjust bottom navigation when a genuine fixed navigation bar is verified.
+ * 2. 3-Icon Navigation Focus: Confidently identifies and hides Search/Explore and Reels in verified bottom navigation,
+ *    recalculating layout to cleanly present Home, Direct Messages, and Profile.
+ * 3. Search & DMs Preserved: Keeps /explore/search/, hashtag lookups, and native Direct Messages intact.
  * 4. Content vs Nav Distinction: Never hide in-feed videos or shared Reel messages in DMs; only block Reels navigation.
  * 5. Idempotent & Reversible: Repeated observer callbacks never compound CSS, and disabling clean UI cleanly restores native layout.
- * 6. Live In-Modal Diagnostics: Real-time inspection of Stories, feed articles, DM route state, and verified bottom tabs.
+ * 6. Live In-Modal Diagnostics: Real-time inspection of Search slot, Reels slot, visible 3-bar tabs, Stories, and DM state.
  */
 
 (function () {
@@ -30,7 +31,7 @@
   if (window.__notinst_userscript_initialized) return;
   window.__notinst_userscript_initialized = true;
 
-  const SCRIPT_VERSION = '1.2.2';
+  const SCRIPT_VERSION = '1.2.3';
 
   // ─── 1. Configuration & Persistence ───────────────────────────────────────
   const DEFAULT_CONFIG = {
@@ -78,7 +79,7 @@
     scanStoriesAndFeed();
   }
 
-  // ─── 2. Route Helpers ─────────────────────────────────────────────────────
+  // ─── 2. Route & Nav Classification Helpers ────────────────────────────────
   function isDirectMessagesRoute() {
     const path = (window.location.pathname || '').toLowerCase();
     return path.startsWith('/direct');
@@ -99,6 +100,100 @@
       lower.includes('query=') ||
       lower.includes('q=') ||
       lower.includes('search')
+    );
+  }
+
+  function isHomeNavItem(link) {
+    if (!link) return false;
+    const href = (link.getAttribute('href') || link.pathname || '').toLowerCase();
+    const aria = (link.getAttribute('aria-label') || '').toLowerCase();
+    const svgAria = (link.querySelector('svg')?.getAttribute('aria-label') || '').toLowerCase();
+    return (
+      href === '/' ||
+      href.startsWith('/?') ||
+      aria === 'home' ||
+      aria.includes('home') ||
+      svgAria === 'home' ||
+      svgAria.includes('home')
+    );
+  }
+
+  function isDirectMessagesNavItem(link) {
+    if (!link) return false;
+    const href = (link.getAttribute('href') || link.pathname || '').toLowerCase();
+    const aria = (link.getAttribute('aria-label') || '').toLowerCase();
+    const svgAria = (link.querySelector('svg')?.getAttribute('aria-label') || '').toLowerCase();
+    return (
+      href.includes('/direct') ||
+      aria.includes('direct') ||
+      aria.includes('message') ||
+      aria.includes('chat') ||
+      svgAria.includes('direct') ||
+      svgAria.includes('message') ||
+      svgAria.includes('chat') ||
+      svgAria.includes('messenger')
+    );
+  }
+
+  function isProfileNavItem(link) {
+    if (!link) return false;
+    const aria = (link.getAttribute('aria-label') || '').toLowerCase();
+    const svgAria = (link.querySelector('svg')?.getAttribute('aria-label') || '').toLowerCase();
+    const hasAvatar = !!link.querySelector('img');
+    return (
+      aria.includes('profile') ||
+      svgAria.includes('profile') ||
+      hasAvatar
+    );
+  }
+
+  function isSearchOrExploreNavItem(link) {
+    if (!link) return false;
+    if (isHomeNavItem(link) || isDirectMessagesNavItem(link) || isProfileNavItem(link)) {
+      return false;
+    }
+
+    const href = (link.getAttribute('href') || link.pathname || '').toLowerCase();
+    const aria = (link.getAttribute('aria-label') || '').toLowerCase();
+    const svgAria = (link.querySelector('svg')?.getAttribute('aria-label') || '').toLowerCase();
+    const svgTitle = (link.querySelector('svg title')?.textContent || '').toLowerCase();
+
+    return (
+      href === '/explore' ||
+      href === '/explore/' ||
+      href.startsWith('/explore') ||
+      href.includes('/search') ||
+      aria.includes('search') ||
+      aria.includes('explore') ||
+      aria.includes('discover') ||
+      svgAria.includes('search') ||
+      svgAria.includes('explore') ||
+      svgAria.includes('discover') ||
+      svgTitle.includes('search') ||
+      svgTitle.includes('explore')
+    );
+  }
+
+  function isReelsNavItem(link) {
+    if (!link) return false;
+    if (isHomeNavItem(link) || isDirectMessagesNavItem(link) || isProfileNavItem(link)) {
+      return false;
+    }
+
+    const href = (link.getAttribute('href') || link.pathname || '').toLowerCase();
+    const aria = (link.getAttribute('aria-label') || '').toLowerCase();
+    const svgAria = (link.querySelector('svg')?.getAttribute('aria-label') || '').toLowerCase();
+    const svgTitle = (link.querySelector('svg title')?.textContent || '').toLowerCase();
+
+    return (
+      href.includes('/reels') ||
+      href.includes('/reel') ||
+      aria.includes('reels') ||
+      aria.includes('reel') ||
+      svgAria.includes('reels') ||
+      svgAria.includes('reel') ||
+      svgTitle.includes('reels') ||
+      svgTitle.includes('reel')
     );
   }
 
@@ -127,6 +222,9 @@
       tabsDetected: 0,
       tabsList: [],
       hiddenTabsCount: 0,
+      searchHidden: false,
+      reelsHidden: false,
+      visibleTabs: [],
       status: 'Scanning',
     },
     lastStatus: 'Initializing',
@@ -433,7 +531,7 @@
             box-sizing: border-box !important;
           }
 
-          /* Force each active slot to take an equal fraction of the bar */
+          /* Force each active slot to take an equal fraction of the bar (33.33% each for 3 icons) */
           [data-notinst-verified-bar="true"] [data-notinst-nav-slot="true"] {
             display: flex !important;
             flex: 1 1 0% !important;
@@ -445,7 +543,7 @@
             padding: 0 !important;
           }
 
-          /* Suppress empty slot wrappers left by blocked items */
+          /* Suppress empty slot wrappers left by blocked items (Search & Reels) */
           [data-notinst-verified-bar="true"] [data-notinst-hidden-slot="true"] {
             display: none !important;
             flex: 0 0 0% !important;
@@ -710,7 +808,6 @@
           const h = dividers[i];
           const text = (h.innerText || h.textContent || '').trim().toLowerCase();
           if (text === 'suggested posts' || text === 'suggested for you') {
-            // Never hide an ancestor container with multiple children or Stories!
             let dividerEl = h;
             if (h.parentElement && h.parentElement.tagName === 'DIV' && h.parentElement.children.length === 1) {
               dividerEl = h.parentElement;
@@ -732,7 +829,7 @@
    * Never touches scrolling feed content, Stories trays, or Direct Message conversations.
    */
   function findVerifiedBottomNavigation() {
-    // If in Direct Messages, Instagram often hides or repurposes the bottom bar; bypass
+    // If in Direct Messages, Instagram hides or repurposes bottom bar; preserve native behavior
     if (isDirectMessagesRoute()) {
       return null;
     }
@@ -779,30 +876,15 @@
       const links = Array.from(el.querySelectorAll('a, div[role="link"], div[role="tab"]'));
       if (links.length < 3 || links.length > 7) continue;
 
-      // Must contain standard top-level tabs (Home + Search/Explore/Profile/Reels)
-      const hasHome = links.some((l) => {
-        const href = (l.getAttribute('href') || l.pathname || '').toLowerCase();
-        const aria = (l.getAttribute('aria-label') || '').toLowerCase();
-        const svgAria = (l.querySelector('svg')?.getAttribute('aria-label') || '').toLowerCase();
-        return href === '/' || href.startsWith('/?') || aria === 'home' || svgAria === 'home';
-      });
-
-      const hasOtherNav = links.some((l) => {
-        const href = (l.getAttribute('href') || l.pathname || '').toLowerCase();
-        const aria = (l.getAttribute('aria-label') || '').toLowerCase();
-        const svgAria = (l.querySelector('svg')?.getAttribute('aria-label') || '').toLowerCase();
-        return (
-          href.includes('/explore') ||
-          href.includes('/reels') ||
-          href.includes('/direct') ||
-          aria.includes('search') ||
-          aria.includes('explore') ||
-          aria.includes('reels') ||
-          aria.includes('profile') ||
-          svgAria.includes('search') ||
-          svgAria.includes('profile')
-        );
-      });
+      // Must contain standard top-level tabs (Home + Search/Explore/Profile/Reels/DMs)
+      const hasHome = links.some((l) => isHomeNavItem(l));
+      const hasOtherNav = links.some(
+        (l) =>
+          isSearchOrExploreNavItem(l) ||
+          isReelsNavItem(l) ||
+          isDirectMessagesNavItem(l) ||
+          isProfileNavItem(l)
+      );
 
       if (hasHome && hasOtherNav) {
         // Find the inner row that holds the slots directly
@@ -889,6 +971,9 @@
         diagnostics.bottomNav.tabsDetected = 0;
         diagnostics.bottomNav.tabsList = [];
         diagnostics.bottomNav.hiddenTabsCount = 0;
+        diagnostics.bottomNav.searchHidden = false;
+        diagnostics.bottomNav.reelsHidden = false;
+        diagnostics.bottomNav.visibleTabs = [];
         diagnostics.bottomNav.status = isDirectMessagesRoute()
           ? 'Bypassed (In Direct Messages)'
           : 'Scanning: Waiting for verified bottom bar';
@@ -919,6 +1004,9 @@
       row.style.setProperty('width', '100%', 'important');
 
       let hiddenCount = 0;
+      let searchHidden = false;
+      let reelsHidden = false;
+      const visibleTabsList = [];
 
       // Configure each detected slot and its link
       slots.forEach((slot) => {
@@ -927,19 +1015,29 @@
         const aria = link ? (link.getAttribute('aria-label') || '').toLowerCase() : '';
         const svg = link?.querySelector('svg')?.getAttribute('aria-label')?.toLowerCase() || '';
 
-        const isReel = href.includes('/reels') || aria.includes('reels') || svg.includes('reels');
-        const isExplore =
-          (href === '/explore/' || href === '/explore' || aria === 'explore' || svg === 'explore') &&
-          !isExploreSearch(href);
+        const isHome = isHomeNavItem(link);
+        const isDM = isDirectMessagesNavItem(link);
+        const isProfile = isProfileNavItem(link);
 
-        const shouldHide = (config.blockReels && isReel) || (config.blockExplore && isExplore);
+        const isSearch = !isHome && !isDM && !isProfile && isSearchOrExploreNavItem(link);
+        const isReel = !isHome && !isDM && !isProfile && isReelsNavItem(link);
+
+        // Hide Search/Explore and Reels slots in the verified bottom navigation bar
+        const shouldHide =
+          (config.cleanMobileUI && (isSearch || isReel)) ||
+          (config.blockReels && isReel) ||
+          (config.blockExplore && isSearch);
 
         if (shouldHide) {
           slot.setAttribute('data-notinst-hidden-slot', 'true');
           slot.style.setProperty('display', 'none', 'important');
           slot.style.setProperty('flex', '0 0 0%', 'important');
           slot.style.setProperty('width', '0', 'important');
+          slot.style.setProperty('margin', '0', 'important');
+          slot.style.setProperty('padding', '0', 'important');
           hiddenCount++;
+          if (isSearch) searchHidden = true;
+          if (isReel) reelsHidden = true;
         } else {
           slot.removeAttribute('data-notinst-hidden-slot');
           slot.setAttribute('data-notinst-nav-slot', 'true');
@@ -948,6 +1046,14 @@
           slot.style.setProperty('justify-content', 'center', 'important');
           slot.style.setProperty('align-items', 'center', 'important');
           slot.style.setProperty('min-width', '0', 'important');
+          slot.style.removeProperty('width');
+
+          let tabName = 'Tab';
+          if (isHome) tabName = 'Home';
+          else if (isDM) tabName = 'Direct Messages';
+          else if (isProfile) tabName = 'Profile';
+          else tabName = aria || svg || (href ? href.replace(/^https?:\/\/[^\/]+/, '') : 'Tab');
+          visibleTabsList.push(tabName);
 
           if (link) {
             link.setAttribute('data-notinst-nav-item', 'true');
@@ -961,7 +1067,10 @@
       });
 
       diagnostics.bottomNav.hiddenTabsCount = hiddenCount;
-      diagnostics.bottomNav.status = `Verified: ${links.length} tabs (${hiddenCount} hidden)`;
+      diagnostics.bottomNav.searchHidden = searchHidden;
+      diagnostics.bottomNav.reelsHidden = reelsHidden;
+      diagnostics.bottomNav.visibleTabs = visibleTabsList;
+      diagnostics.bottomNav.status = `Verified: ${visibleTabsList.length} visible (${hiddenCount} hidden)`;
       diagnostics.lastError = null;
     } catch (err) {
       diagnostics.bottomNav.status = 'Error in alignMobileNavigation';
@@ -1111,21 +1220,27 @@
         </span>
       </div>
       <div class="notinst-diag-row">
-        <span>Bottom Navigation</span>
-        <span class="val" style="color:${diagnostics.bottomNav.found ? '#4ade80' : '#f59e0b'}">
-          ${diagnostics.bottomNav.found ? 'Verified Fixed Bar' : diagnostics.bottomNav.status}
+        <span>Search / Explore Slot</span>
+        <span class="val" style="color:${diagnostics.bottomNav.searchHidden ? '#4ade80' : '#f59e0b'}; font-weight:600;">
+          ${diagnostics.bottomNav.searchHidden ? 'Hidden (Blocked)' : (diagnostics.bottomNav.found ? 'Visible' : 'N/A')}
         </span>
       </div>
       <div class="notinst-diag-row">
-        <span>Detected Tabs</span>
-        <span class="val">
-          ${diagnostics.bottomNav.tabsDetected > 0 ? diagnostics.bottomNav.tabsDetected + ' tabs (' + diagnostics.bottomNav.hiddenTabsCount + ' hidden)' : 'None'}
+        <span>Reels Nav Slot</span>
+        <span class="val" style="color:${diagnostics.bottomNav.reelsHidden ? '#4ade80' : '#f59e0b'}; font-weight:600;">
+          ${diagnostics.bottomNav.reelsHidden ? 'Hidden (Blocked)' : (diagnostics.bottomNav.found ? 'Visible' : 'N/A')}
+        </span>
+      </div>
+      <div class="notinst-diag-row">
+        <span>Visible Nav Tabs</span>
+        <span class="val" style="color:#60a5fa;" title="${diagnostics.bottomNav.visibleTabs.join(', ')}">
+          ${diagnostics.bottomNav.visibleTabs.length > 0 ? diagnostics.bottomNav.visibleTabs.join(' · ') : 'None'}
         </span>
       </div>
       <div class="notinst-diag-row">
         <span>Clean Mobile UI</span>
         <span class="val" style="color:${isClean ? '#4ade80' : '#f87171'}; font-weight:600;">
-          ${isClean ? 'ENABLED' : 'DISABLED'}
+          ${isClean ? 'ENABLED (3 Tabs)' : 'DISABLED'}
         </span>
       </div>
       <div class="notinst-diag-row" style="margin-top:4px; padding-top:4px; border-top:1px solid #27272a;">
@@ -1166,7 +1281,7 @@
         <div class="notinst-toggle-row">
           <div>
             <div class="notinst-toggle-label">Clean Mobile UI</div>
-            <div class="notinst-toggle-desc">Evenly space verified bottom navigation tabs</div>
+            <div class="notinst-toggle-desc">Focus on 3 tabs: Home, DMs, & Profile</div>
           </div>
           <label class="notinst-switch">
             <input type="checkbox" id="notinst-set-clean-ui" ${config.cleanMobileUI ? 'checked' : ''}>

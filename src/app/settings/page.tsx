@@ -66,10 +66,10 @@ const FILTER_ITEMS: FilterSetting[] = [
   {
     id: 'cleanMobileUI',
     name: 'Clean Mobile Navigation',
-    description: 'Evenly distributes bottom navigation tabs and centers the Messages/DM icon across all iPhone screen sizes without empty gaps or layout shifts.',
+    description: 'Focuses bottom navigation on exactly 3 tabs: Home, Direct Messages, and Profile, while hiding Search and Reels.',
     icon: Smartphone,
     defaultEnabled: true,
-    tag: 'UI Alignment',
+    tag: '3-Tab Focus',
   },
   {
     id: 'showCaughtUpCard',
@@ -111,7 +111,7 @@ export default function SettingsPage() {
                 <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
                   Notinst Firewall
                   <span className="text-[11px] font-semibold uppercase px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                    Safari Userscript v1.2.2
+                    Safari Userscript v1.2.3
                   </span>
                 </h1>
                 <p className="text-xs text-zinc-400">
