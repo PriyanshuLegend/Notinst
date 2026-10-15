@@ -1,26 +1,22 @@
-import BottomNav from './BottomNav';
-
 interface AppShellProps {
   children: React.ReactNode;
   header?: React.ReactNode;
 }
 
 /**
- * AppShell wraps each page with consistent padding so content clears
- * the bottom nav, and optionally renders a sticky header.
+ * AppShell provides consistent layout and styling for the Notinst website.
  */
 export default function AppShell({ children, header }: AppShellProps) {
   return (
-    <div className="flex flex-col min-h-screen bg-white dark:bg-zinc-950">
+    <div className="flex flex-col min-h-screen bg-zinc-950 text-zinc-100">
       {header && (
-        <header className="sticky top-0 z-40 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800">
+        <header className="sticky top-0 z-40 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800">
           {header}
         </header>
       )}
-      <main className="flex-1 pb-16">
+      <main className="flex-1">
         {children}
       </main>
-      <BottomNav />
     </div>
   );
 }

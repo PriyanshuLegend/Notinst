@@ -1,14 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import {
   Shield,
   Download,
   Copy,
   Check,
   ExternalLink,
-  Sliders,
   AlertTriangle,
   HelpCircle,
   Sparkles,
@@ -99,13 +97,13 @@ export default function SettingsPage() {
 
   return (
     <AppShell>
-      <div className="max-w-2xl mx-auto px-4 py-6 space-y-8 pb-24 text-zinc-100">
+      <div className="max-w-2xl mx-auto px-4 py-8 space-y-8 pb-16 text-zinc-100">
         {/* Header */}
         <div className="space-y-2 border-b border-zinc-800 pb-5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-                <Shield size={22} />
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                <Shield size={24} />
               </div>
               <div>
                 <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
@@ -115,18 +113,20 @@ export default function SettingsPage() {
                   </span>
                 </h1>
                 <p className="text-xs text-zinc-400">
-                  Branded distraction filtering for Instagram Web on iPhone
+                  Distraction-free personal browsing for Instagram Web on iPhone
                 </p>
               </div>
             </div>
 
-            <Link
-              href="/diagnostics"
+            <a
+              href="/notinst.user.js"
+              target="_blank"
+              rel="noopener noreferrer"
               className="text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-800 hover:border-zinc-700 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
             >
-              <Sliders size={13} />
-              Diagnostics
-            </Link>
+              <Download size={13} />
+              Raw Script
+            </a>
           </div>
         </div>
 
@@ -254,7 +254,7 @@ export default function SettingsPage() {
                 <div className="space-y-1">
                   <div className="text-sm font-semibold text-white">Browse Distraction-Free on Instagram</div>
                   <p className="text-xs text-zinc-400 leading-relaxed">
-                    Navigate to <strong>instagram.com</strong>. You will notice the floating <strong>🛡️ Notinst</strong> badge at the bottom right. Reels and discovery grids are removed, and only followed content appears!
+                    Navigate to <strong>instagram.com</strong>. You will notice the floating <strong>🛡️ Notinst</strong> badge at the bottom right. Reels and discovery grids are removed, and only followed content appears with clean 3-icon navigation!
                   </p>
                 </div>
               </div>
@@ -300,24 +300,24 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Honest Architecture Disclosures */}
+        {/* Architecture Disclosures */}
         <div className="bg-amber-950/20 border border-amber-500/30 rounded-2xl p-4.5 space-y-3">
           <div className="flex items-center gap-2 text-amber-400 font-semibold text-sm">
             <AlertTriangle size={18} />
-            Honest Architecture & Platform Disclosures
+            Architecture & Privacy Disclosures
           </div>
           <div className="text-xs text-zinc-300 space-y-2 leading-relaxed">
             <p>
               <strong>1. Same-Origin Browser Security:</strong> A separate website cannot directly read, modify, or proxy Instagram&apos;s web DOM due to browser cross-origin boundaries. Running through Safari&apos;s local <em>Userscripts</em> extension runs code securely on your device within Instagram&apos;s page context.
             </p>
             <p>
-              <strong>2. Meta Official API Limitation:</strong> Meta&apos;s Graph API does <em>not</em> provide an endpoint for retrieving your consumer Following feed or Followed Stories (the Basic Display API was completely retired in December 2024). The Notinst web portal connects to official Business/Creator tools (profile, DMs, publishing), while the Safari Userscript delivers the distraction-free consumer browsing experience.
+              <strong>2. Client-Side Distraction Filtering:</strong> Meta does not offer options to disable Reels, Explore discovery loops, or algorithmic suggested posts. Notinst injects client-side protections directly on your iPhone to eliminate addictive surfaces while preserving your followed feed, Stories, and Direct Messages.
             </p>
             <p>
-              <strong>3. Resilient Fallbacks:</strong> If Instagram updates its DOM structure, Notinst&apos;s text-anchored and semantic selectors fail safely by leaving content visible rather than breaking page layout.
+              <strong>3. Resilient Fallbacks:</strong> If Instagram updates its DOM structure, Notinst&apos;s dual-strategy and text-anchored selectors fail safely by leaving content visible rather than breaking page layout.
             </p>
             <p>
-              <strong>4. Independent Userscript Settings:</strong> Because the browser sandbox isolates storage between this site and instagram.com, live setting adjustments are made and stored directly on Instagram via the floating <strong>🛡️ Notinst</strong> modal, ensuring immediate responsiveness without round-trip latency.
+              <strong>4. Independent In-Page Settings:</strong> Because the browser sandbox isolates storage between this site and instagram.com, live setting adjustments are stored directly on Instagram via the floating <strong>🛡️ Notinst</strong> modal, ensuring immediate responsiveness without server round-trips.
             </p>
           </div>
         </div>
@@ -336,6 +336,10 @@ export default function SettingsPage() {
             <div>
               <div className="text-zinc-200 font-medium mb-0.5">Does searching for accounts still work?</div>
               <p>Yes. The Explore firewall explicitly preserves account searches (e.g. <code>/explore/search/</code>) and hashtag queries. Only the infinite recommendation grid is blocked.</p>
+            </div>
+            <div>
+              <div className="text-zinc-200 font-medium mb-0.5">Why doesn&apos;t the extension run when using &quot;Add to Home Screen&quot;?</div>
+              <p>Apple disables all Safari Web Extensions inside standalone Home Screen PWAs. To get a 1-tap Home Screen experience, create an iOS Shortcut using the <strong>Open URL</strong> action targeting <code>https://www.instagram.com/</code> and add that shortcut to your Home Screen.</p>
             </div>
             <div>
               <div className="text-zinc-200 font-medium mb-0.5">How do I update the userscript?</div>
