@@ -2,8 +2,8 @@
 // ==UserScript==
 // @name         Notinst — Distraction-Free Instagram
 // @namespace    https://notinst.local/
-// @version      1.2.1
-// @description  Eliminate Reels, Explore discovery loops, sponsored ads, and algorithmic suggested posts while preserving followed feeds, Stories, DMs, profiles, and search. Includes robust clean mobile navigation alignment with live DOM diagnostics.
+// @version      1.2.2
+// @description  Eliminate Reels, Explore discovery loops, sponsored ads, and algorithmic suggested posts while preserving followed feeds, Stories, DMs, profiles, and search. Safe, non-destructive mobile UI alignment with live diagnostics.
 // @author       Notinst
 // @match        https://*.instagram.com/*
 // @grant        GM_getValue
@@ -13,16 +13,15 @@
 // ==/UserScript==
 
 /**
- * Notinst Instagram Firewall — Safari Userscript v1.2.1
+ * Notinst Instagram Firewall — Safari Userscript v1.2.2
  *
  * Core Principles:
- * 1. Safe & Conservative: If unsure, do not hide. Never hide ordinary followed posts.
- * 2. Search Preservation: Keep /explore/search/, tags, and query params functional.
- * 3. Configurable: Every filter can be independently enabled or disabled.
- * 4. Resilient: Uses semantic attributes and text indicators, never obfuscated CSS classes.
- * 5. Private: Zero credential harvesting, zero token extraction, zero external proxying.
- * 6. Clean Mobile UI: Evenly spaces bottom navigation and centers icons without collisions.
- * 7. Real Diagnostics: In-modal live DOM inspection & visual element highlighting.
+ * 1. Safe & Non-Destructive: Never hide or mutate common ancestors, main feed wrappers, or Stories trays.
+ * 2. Search & DMs Preserved: Keep /explore/search/, hashtag lookups, and native Direct Messages intact.
+ * 3. Scoped Navigation Engine: Only adjust bottom navigation when a genuine fixed navigation bar is verified.
+ * 4. Content vs Nav Distinction: Never hide in-feed videos or shared Reel messages in DMs; only block Reels navigation.
+ * 5. Idempotent & Reversible: Repeated observer callbacks never compound CSS, and disabling clean UI cleanly restores native layout.
+ * 6. Live In-Modal Diagnostics: Real-time inspection of Stories, feed articles, DM route state, and verified bottom tabs.
  */
 
 (function () {
@@ -31,7 +30,7 @@
   if (window.__notinst_userscript_initialized) return;
   window.__notinst_userscript_initialized = true;
 
-  const SCRIPT_VERSION = '1.2.1';
+  const SCRIPT_VERSION = '1.2.2';
 
   // ─── 1. Configuration & Persistence ───────────────────────────────────────
   const DEFAULT_CONFIG = {
@@ -76,25 +75,67 @@
     applyDynamicStyles();
     alignMobileNavigation(document);
     filterFeedRecommendations(document);
+    scanStoriesAndFeed();
   }
 
-  // ─── 2. Diagnostics Data Store ────────────────────────────────────────────
-  const navDiagnostic = {
+  // ─── 2. Route Helpers ─────────────────────────────────────────────────────
+  function isDirectMessagesRoute() {
+    const path = (window.location.pathname || '').toLowerCase();
+    return path.startsWith('/direct');
+  }
+
+  function isFeedRoute() {
+    const path = (window.location.pathname || '').toLowerCase();
+    return path === '/' || path.startsWith('/?') || path === '';
+  }
+
+  function isExploreSearch(urlStr) {
+    if (!urlStr) return false;
+    const lower = urlStr.toLowerCase();
+    return (
+      lower.includes('/explore/search') ||
+      lower.includes('/explore/tags') ||
+      lower.includes('/explore/locations') ||
+      lower.includes('query=') ||
+      lower.includes('q=') ||
+      lower.includes('search')
+    );
+  }
+
+  // ─── 3. Diagnostics Data Store ────────────────────────────────────────────
+  const diagnostics = {
     version: SCRIPT_VERSION,
     cleanMobileUI: config.cleanMobileUI,
-    stylesheetExists: false,
-    containerFound: false,
-    containerSelector: 'None',
-    linksDetectedCount: 0,
-    linksList: [],
-    hiddenSlotsCount: 0,
+    currentPath: '/',
+    currentRoute: 'Home (Feed)',
+    isDMRoute: false,
+    stylesheetActive: false,
+    stories: {
+      detected: false,
+      count: 0,
+      description: 'Scanning...',
+    },
+    feed: {
+      detected: false,
+      articlesTotal: 0,
+      suggestedFiltered: 0,
+      sponsoredFiltered: 0,
+    },
+    bottomNav: {
+      found: false,
+      selector: 'None',
+      tabsDetected: 0,
+      tabsList: [],
+      hiddenTabsCount: 0,
+      status: 'Scanning',
+    },
     lastStatus: 'Initializing',
     lastError: null,
     lastRunTime: null,
     highlightActive: false,
   };
 
-  // ─── 3. Dynamic Styles Injection ──────────────────────────────────────────
+  // ─── 4. Dynamic Styles Injection ──────────────────────────────────────────
   const STYLE_ID = 'notinst-firewall-styles';
 
   function applyDynamicStyles() {
@@ -105,12 +146,12 @@
       (document.head || document.documentElement).appendChild(style);
     }
 
-    navDiagnostic.stylesheetExists = !!document.getElementById(STYLE_ID);
+    diagnostics.stylesheetActive = !!document.getElementById(STYLE_ID);
 
     let css = `
-      /* ─── Notinst Shared Utility Styles ─── */
+      /* ─── Notinst Caught-Up Banner ─── */
       #notinst-caught-up-banner {
-        margin: 32px 16px;
+        margin: 28px 16px;
         padding: 24px 20px;
         background-color: #121214;
         border: 1px solid #27272a;
@@ -119,6 +160,7 @@
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
         color: #f4f4f5;
+        box-sizing: border-box;
       }
       #notinst-caught-up-banner h3 {
         font-size: 16px;
@@ -148,7 +190,7 @@
         background-color: #3f3f46;
       }
 
-      /* ─── Floating Settings Badge (Safe positioning above bottom bar) ─── */
+      /* ─── Floating Settings Badge ─── */
       #notinst-settings-pill {
         position: fixed;
         bottom: calc(64px + env(safe-area-inset-bottom, 0px));
@@ -177,7 +219,7 @@
         transform: scale(0.95);
       }
 
-      /* ─── In-Page Settings Modal (Responsive & Scrollable for mobile) ─── */
+      /* ─── In-Page Settings Modal ─── */
       #notinst-modal-backdrop {
         position: fixed;
         inset: 0;
@@ -299,7 +341,7 @@
         color: #f4f4f5;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         text-align: right;
-        max-width: 60%;
+        max-width: 62%;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -340,47 +382,49 @@
       }
     `;
 
-    // ─── Conditional Reels Hiding ───
+    // ─── Conditional Reels Hiding (Navigation Contexts Only) ───
     if (config.blockReels) {
       css += `
-        a[href*="/reels/"],
-        a[href*="/reels"],
-        a[href*="/reel/"],
-        a[href$="/reels/"],
-        a[href$="/reels"] {
+        /* Hide dedicated Reels tabs in navigation contexts without breaking in-feed video posts or shared DMs */
+        nav a[href*="/reels"],
+        [role="navigation"] a[href*="/reels"],
+        header a[href*="/reels"],
+        [data-notinst-verified-bar="true"] [data-notinst-hidden-slot="true"] {
           display: none !important;
           pointer-events: none !important;
         }
-        [aria-label*="Reels" i],
-        svg[aria-label*="Reels" i] {
+        nav [aria-label*="Reels" i],
+        [role="navigation"] [aria-label*="Reels" i] {
           display: none !important;
         }
       `;
     }
 
-    // ─── Conditional Explore Hiding (while preserving search) ───
+    // ─── Conditional Explore Hiding (Navigation Contexts Only, Preserves Search) ───
     if (config.blockExplore) {
       css += `
-        a[href="/explore/"],
-        a[href="/explore"] {
+        nav a[href="/explore/"],
+        nav a[href="/explore"],
+        [role="navigation"] a[href="/explore/"],
+        [role="navigation"] a[href="/explore"],
+        header a[href="/explore/"],
+        header a[href="/explore"] {
           display: none !important;
           pointer-events: none !important;
         }
-        [aria-label="Explore" i],
-        [aria-label="Discover" i],
-        svg[aria-label="Explore" i],
-        svg[aria-label="Discover" i] {
+        nav [aria-label="Explore" i],
+        [role="navigation"] [aria-label="Explore" i] {
           display: none !important;
         }
       `;
     }
 
-    // ─── Clean Mobile Bottom Navigation Alignment ───
+    // ─── Clean Mobile Bottom Navigation Alignment (Scoped strictly to verified bottom bar) ───
     if (config.cleanMobileUI) {
       css += `
         @media (max-width: 768px) {
-          /* Distribute navigation slots evenly */
-          [data-notinst-nav-row="true"] {
+          /* Distribute slots strictly within the verified bottom navigation row */
+          [data-notinst-verified-bar="true"] [data-notinst-nav-row="true"] {
             display: flex !important;
             flex-direction: row !important;
             justify-content: space-around !important;
@@ -390,7 +434,7 @@
           }
 
           /* Force each active slot to take an equal fraction of the bar */
-          [data-notinst-nav-slot="true"] {
+          [data-notinst-verified-bar="true"] [data-notinst-nav-slot="true"] {
             display: flex !important;
             flex: 1 1 0% !important;
             justify-content: center !important;
@@ -402,7 +446,7 @@
           }
 
           /* Suppress empty slot wrappers left by blocked items */
-          [data-notinst-nav-slot="true"][data-notinst-hidden-slot="true"] {
+          [data-notinst-verified-bar="true"] [data-notinst-hidden-slot="true"] {
             display: none !important;
             flex: 0 0 0% !important;
             width: 0 !important;
@@ -411,24 +455,13 @@
           }
 
           /* Horizontally center every navigation link within its slot */
-          [data-notinst-nav-item="true"] {
+          [data-notinst-verified-bar="true"] [data-notinst-nav-item="true"] {
             display: flex !important;
             justify-content: center !important;
             align-items: center !important;
             width: 100% !important;
             margin: 0 auto !important;
             box-sizing: border-box !important;
-          }
-
-          /* Explicitly center the Direct Messages / DM icon and badge container */
-          [data-notinst-nav-dm="true"],
-          [data-notinst-nav-dm="true"] > div,
-          [data-notinst-nav-dm="true"] svg {
-            margin-left: auto !important;
-            margin-right: auto !important;
-            display: flex !important;
-            justify-content: center !important;
-            align-items: center !important;
           }
         }
       `;
@@ -437,29 +470,16 @@
     style.textContent = css;
   }
 
-  // ─── 4. Route Interception (Reels & Explore to Home) ───────────────────────
-  function isExploreSearch(urlStr) {
-    if (!urlStr) return false;
-    const lower = urlStr.toLowerCase();
-    return (
-      lower.includes('/explore/search') ||
-      lower.includes('/explore/tags') ||
-      lower.includes('/explore/locations') ||
-      lower.includes('query=') ||
-      lower.includes('q=') ||
-      lower.includes('search')
-    );
-  }
-
+  // ─── 5. Route Interception (Reels & Explore to Home) ───────────────────────
   function checkAndRedirectURL(urlStr) {
     if (!urlStr) return;
     try {
       const u = new URL(urlStr, window.location.origin);
       const path = u.pathname.toLowerCase();
 
-      // Reels Firewall check
+      // Reels Firewall check (dedicated reels surface)
       if (config.blockReels) {
-        if (path.startsWith('/reels') || path.startsWith('/reel/')) {
+        if (path === '/reels' || path === '/reels/' || path.startsWith('/reels/')) {
           window.location.replace('/');
           return true;
         }
@@ -486,29 +506,49 @@
   history.pushState = function (state, title, url) {
     if (url && typeof url === 'string') {
       const lower = url.toLowerCase();
-      if (config.blockReels && (lower.startsWith('/reels') || lower.startsWith('/reel/'))) {
+      if (config.blockReels && (lower === '/reels' || lower === '/reels/' || lower.startsWith('/reels/'))) {
         return originalPushState.apply(this, [state, title, '/']);
       }
       if (config.blockExplore && (lower === '/explore' || lower === '/explore/') && !isExploreSearch(url)) {
         return originalPushState.apply(this, [state, title, '/']);
       }
     }
-    return originalPushState.apply(this, arguments);
+    const result = originalPushState.apply(this, arguments);
+    onRouteTransition();
+    return result;
   };
 
   const originalReplaceState = history.replaceState;
   history.replaceState = function (state, title, url) {
     if (url && typeof url === 'string') {
       const lower = url.toLowerCase();
-      if (config.blockReels && (lower.startsWith('/reels') || lower.startsWith('/reel/'))) {
+      if (config.blockReels && (lower === '/reels' || lower === '/reels/' || lower.startsWith('/reels/'))) {
         return originalReplaceState.apply(this, [state, title, '/']);
       }
       if (config.blockExplore && (lower === '/explore' || lower === '/explore/') && !isExploreSearch(url)) {
         return originalReplaceState.apply(this, [state, title, '/']);
       }
     }
-    return originalReplaceState.apply(this, arguments);
+    const result = originalReplaceState.apply(this, arguments);
+    onRouteTransition();
+    return result;
   };
+
+  window.addEventListener('popstate', onRouteTransition);
+
+  function onRouteTransition() {
+    diagnostics.currentPath = window.location.pathname;
+    diagnostics.isDMRoute = isDirectMessagesRoute();
+    if (diagnostics.isDMRoute) {
+      diagnostics.currentRoute = 'Direct Messages';
+    } else if (isFeedRoute()) {
+      diagnostics.currentRoute = 'Home (Feed)';
+    } else if (window.location.pathname.startsWith('/explore')) {
+      diagnostics.currentRoute = 'Explore / Search';
+    } else {
+      diagnostics.currentRoute = 'Page / Profile';
+    }
+  }
 
   // Intercept in-page click events (capture phase)
   document.addEventListener(
@@ -521,7 +561,7 @@
         const href = anchor.getAttribute('href') || anchor.pathname || '';
         const lower = href.toLowerCase();
 
-        if (config.blockReels && (lower.startsWith('/reels') || lower.startsWith('/reel/'))) {
+        if (config.blockReels && (lower === '/reels' || lower === '/reels/' || lower.startsWith('/reels/'))) {
           e.preventDefault();
           e.stopPropagation();
           window.location.href = '/';
@@ -545,7 +585,7 @@
     true
   );
 
-  // ─── 5. Resilient Content Filtering (Suggested & Sponsored) ────────────────
+  // ─── 6. Safe Content Filtering (Suggested & Sponsored) ─────────────────────
   const SUGGESTED_PHRASES = [
     'suggested for you',
     'suggested post',
@@ -626,18 +666,26 @@
 
   function filterFeedRecommendations(root) {
     try {
+      // Direct Messages must remain 100% untouched by content filtering
+      if (isDirectMessagesRoute()) return;
+
+      // Only filter recommendations on Home feed
+      if (!isFeedRoute()) return;
+
       const target = root || document;
       const articles = target.querySelectorAll ? target.querySelectorAll('article') : [];
 
       for (let i = 0; i < articles.length; i++) {
         const article = articles[i];
 
+        // Never filter Stories tray or elements containing story links
+        if (article.querySelector('a[href*="/stories/"]')) continue;
+
         if (config.filterSuggested) {
           const suggestedReason = isSuggestedArticle(article);
           if (suggestedReason) {
             article.style.setProperty('display', 'none', 'important');
-            article.setAttribute('data-notinst-filtered', 'true');
-            article.setAttribute('data-notinst-reason', 'suggested');
+            article.setAttribute('data-notinst-filtered', 'suggested');
             insertCaughtUpCard(article);
             continue;
           }
@@ -647,24 +695,29 @@
           const sponsoredReason = isSponsoredArticle(article);
           if (sponsoredReason) {
             article.style.setProperty('display', 'none', 'important');
-            article.setAttribute('data-notinst-filtered', 'true');
-            article.setAttribute('data-notinst-reason', 'sponsored');
+            article.setAttribute('data-notinst-filtered', 'sponsored');
             continue;
           }
         }
 
-        article.setAttribute('data-notinst-filtered', 'true');
+        article.setAttribute('data-notinst-filtered', 'clean');
       }
 
+      // Hide only isolated "Suggested posts" divider headings without collapsing parent containers
       if (config.filterSuggested) {
         const dividers = target.querySelectorAll ? target.querySelectorAll('main h2, main h3, main h4') : [];
         for (let i = 0; i < dividers.length; i++) {
           const h = dividers[i];
           const text = (h.innerText || h.textContent || '').trim().toLowerCase();
           if (text === 'suggested posts' || text === 'suggested for you') {
-            const container = h.closest('div[style*="flex"]') || h;
-            container.style.setProperty('display', 'none', 'important');
-            insertCaughtUpCard(container);
+            // Never hide an ancestor container with multiple children or Stories!
+            let dividerEl = h;
+            if (h.parentElement && h.parentElement.tagName === 'DIV' && h.parentElement.children.length === 1) {
+              dividerEl = h.parentElement;
+            }
+            dividerEl.style.setProperty('display', 'none', 'important');
+            dividerEl.setAttribute('data-notinst-filtered', 'suggested-divider');
+            insertCaughtUpCard(dividerEl);
           }
         }
       }
@@ -673,143 +726,191 @@
     }
   }
 
-  // ─── 6. Robust Mobile Navigation Alignment Engine ────────────────────────
-  function findBottomNavigationElements() {
+  // ─── 7. Safe & Verified Bottom Navigation Alignment Engine ────────────────
+  /**
+   * Identifies ONLY the genuine fixed mobile bottom navigation bar.
+   * Never touches scrolling feed content, Stories trays, or Direct Message conversations.
+   */
+  function findVerifiedBottomNavigation() {
+    // If in Direct Messages, Instagram often hides or repurposes the bottom bar; bypass
+    if (isDirectMessagesRoute()) {
+      return null;
+    }
+
     const vh = window.innerHeight || document.documentElement.clientHeight;
-    const allInteractive = document.querySelectorAll('a, div[role="button"]');
-    const bottomLinks = [];
+    const vw = window.innerWidth || document.documentElement.clientWidth;
 
-    // 1. Identify interactive links physically located in the bottom 110px of the mobile viewport
-    for (let i = 0; i < allInteractive.length; i++) {
-      const el = allInteractive[i];
-      const r = el.getBoundingClientRect();
+    // Mobile screens only
+    if (vw > 768) {
+      return null;
+    }
 
-      // Must be visible and in the bottom navigation bar band
-      if (r.height >= 18 && r.width >= 18 && r.top > vh - 110) {
-        const href = (el.getAttribute('href') || el.pathname || '').toLowerCase();
-        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-        const hasGraphic = el.querySelector('svg') || el.querySelector('img');
+    const candidates = document.querySelectorAll(
+      'nav, [role="navigation"], footer, div[style*="fixed"], div[style*="sticky"]'
+    );
 
-        // Verify it looks like a bottom navigation item (Home, Search, Create, Reels, DMs, Profile)
-        const isNav =
-          hasGraphic ||
-          href === '/' ||
+    for (let i = 0; i < candidates.length; i++) {
+      const el = candidates[i];
+
+      // Exclude main, article, headers, and Notinst modal UI
+      if (
+        el.closest('main') ||
+        el.closest('article') ||
+        el.closest('#notinst-modal-backdrop') ||
+        el.id === 'notinst-settings-pill'
+      ) {
+        continue;
+      }
+
+      // Check computed positioning: must be fixed or sticky
+      const style = window.getComputedStyle(el);
+      const isFixed = style.position === 'fixed' || style.position === 'sticky';
+      if (!isFixed) continue;
+
+      const rect = el.getBoundingClientRect();
+      // Must be physically anchored at the bottom edge of the mobile viewport
+      const isAtBottom = rect.bottom >= vh - 10 && rect.top >= vh - 85;
+      const hasBarHeight = rect.height >= 34 && rect.height <= 85;
+      const hasBarWidth = rect.width >= vw * 0.7;
+
+      if (!isAtBottom || !hasBarHeight || !hasBarWidth) continue;
+
+      // Check for navigation links
+      const links = Array.from(el.querySelectorAll('a, div[role="link"], div[role="tab"]'));
+      if (links.length < 3 || links.length > 7) continue;
+
+      // Must contain standard top-level tabs (Home + Search/Explore/Profile/Reels)
+      const hasHome = links.some((l) => {
+        const href = (l.getAttribute('href') || l.pathname || '').toLowerCase();
+        const aria = (l.getAttribute('aria-label') || '').toLowerCase();
+        const svgAria = (l.querySelector('svg')?.getAttribute('aria-label') || '').toLowerCase();
+        return href === '/' || href.startsWith('/?') || aria === 'home' || svgAria === 'home';
+      });
+
+      const hasOtherNav = links.some((l) => {
+        const href = (l.getAttribute('href') || l.pathname || '').toLowerCase();
+        const aria = (l.getAttribute('aria-label') || '').toLowerCase();
+        const svgAria = (l.querySelector('svg')?.getAttribute('aria-label') || '').toLowerCase();
+        return (
           href.includes('/explore') ||
           href.includes('/reels') ||
           href.includes('/direct') ||
-          href.includes('/create') ||
-          aria.includes('home') ||
           aria.includes('search') ||
-          aria.includes('direct') ||
-          aria.includes('messages') ||
-          aria.includes('profile');
+          aria.includes('explore') ||
+          aria.includes('reels') ||
+          aria.includes('profile') ||
+          svgAria.includes('search') ||
+          svgAria.includes('profile')
+        );
+      });
 
-        if (isNav) {
-          bottomLinks.push(el);
+      if (hasHome && hasOtherNav) {
+        // Find the inner row that holds the slots directly
+        let row = el;
+        if (el.children.length === 1 && links.every((l) => el.children[0].contains(l))) {
+          row = el.children[0];
+        }
+
+        // Identify the slot wrappers (direct children of row)
+        const slots = Array.from(row.children).filter((child) =>
+          links.some((l) => child.contains(l))
+        );
+
+        if (slots.length >= 3 && slots.length <= 7) {
+          return { container: el, row, slots, links };
         }
       }
     }
 
-    if (bottomLinks.length < 2) {
-      return { container: null, row: null, links: [] };
-    }
+    return null;
+  }
 
-    // 2. Identify common parent flex row container
-    // Start from the first detected link and find its lowest common ancestor that holds all bottom links
-    let commonParent = bottomLinks[0].parentElement;
-    while (commonParent && commonParent !== document.body) {
-      const containsAll = bottomLinks.every((link) => commonParent.contains(link));
-      if (containsAll) break;
-      commonParent = commonParent.parentElement;
-    }
+  function cleanUpBottomNavigationStyles() {
+    try {
+      const bars = document.querySelectorAll('[data-notinst-verified-bar]');
+      bars.forEach((b) => b.removeAttribute('data-notinst-verified-bar'));
 
-    if (!commonParent) {
-      return { container: null, row: null, links: bottomLinks };
-    }
+      const rows = document.querySelectorAll('[data-notinst-nav-row]');
+      rows.forEach((r) => {
+        r.removeAttribute('data-notinst-nav-row');
+        r.style.removeProperty('display');
+        r.style.removeProperty('flex-direction');
+        r.style.removeProperty('justify-content');
+        r.style.removeProperty('align-items');
+        r.style.removeProperty('width');
+      });
 
-    // Identify if there is an inner row holding the slots directly
-    let row = commonParent;
-    for (let i = 0; i < commonParent.children.length; i++) {
-      const child = commonParent.children[i];
-      const childMatches = bottomLinks.filter((l) => child.contains(l));
-      if (childMatches.length === bottomLinks.length) {
-        row = child;
-        break;
-      }
-    }
+      const slots = document.querySelectorAll('[data-notinst-nav-slot]');
+      slots.forEach((s) => {
+        s.removeAttribute('data-notinst-nav-slot');
+        s.removeAttribute('data-notinst-hidden-slot');
+        s.style.removeProperty('display');
+        s.style.removeProperty('flex');
+        s.style.removeProperty('justify-content');
+        s.style.removeProperty('align-items');
+        s.style.removeProperty('min-width');
+        s.style.removeProperty('margin');
+        s.style.removeProperty('padding');
+        s.style.removeProperty('width');
+      });
 
-    return { container: commonParent, row: row, links: bottomLinks };
+      const items = document.querySelectorAll('[data-notinst-nav-item]');
+      items.forEach((it) => {
+        it.removeAttribute('data-notinst-nav-item');
+        it.style.removeProperty('display');
+        it.style.removeProperty('justify-content');
+        it.style.removeProperty('align-items');
+        it.style.removeProperty('width');
+        it.style.removeProperty('margin');
+      });
+    } catch {
+      // Fail-safe
+    }
   }
 
   function alignMobileNavigation(root) {
-    navDiagnostic.lastRunTime = new Date().toLocaleTimeString();
+    diagnostics.lastRunTime = new Date().toLocaleTimeString();
 
     if (!config.cleanMobileUI) {
-      // Reversible restoration of Instagram's native layout
-      try {
-        const rows = document.querySelectorAll('[data-notinst-nav-row]');
-        rows.forEach((r) => {
-          r.removeAttribute('data-notinst-nav-row');
-          r.style.removeProperty('display');
-          r.style.removeProperty('flex-direction');
-          r.style.removeProperty('justify-content');
-          r.style.removeProperty('align-items');
-          r.style.removeProperty('width');
-        });
-
-        const slots = document.querySelectorAll('[data-notinst-nav-slot]');
-        slots.forEach((s) => {
-          s.removeAttribute('data-notinst-nav-slot');
-          s.removeAttribute('data-notinst-hidden-slot');
-          s.style.removeProperty('display');
-          s.style.removeProperty('flex');
-          s.style.removeProperty('justify-content');
-          s.style.removeProperty('align-items');
-          s.style.removeProperty('min-width');
-          s.style.removeProperty('margin');
-          s.style.removeProperty('padding');
-        });
-
-        const items = document.querySelectorAll('[data-notinst-nav-item]');
-        items.forEach((it) => {
-          it.removeAttribute('data-notinst-nav-item');
-          it.removeAttribute('data-notinst-nav-dm');
-          it.style.removeProperty('display');
-          it.style.removeProperty('justify-content');
-          it.style.removeProperty('align-items');
-          it.style.removeProperty('width');
-          it.style.removeProperty('margin');
-        });
-
-        navDiagnostic.lastStatus = 'Clean UI disabled (Native layout restored)';
-      } catch (err) {
-        navDiagnostic.lastError = err.message;
-      }
+      cleanUpBottomNavigationStyles();
+      diagnostics.bottomNav.found = false;
+      diagnostics.bottomNav.status = 'Clean UI disabled (Native layout active)';
       return;
     }
 
     try {
-      const { container, row, links } = findBottomNavigationElements();
+      const nav = findVerifiedBottomNavigation();
 
-      if (!row || links.length < 2) {
-        navDiagnostic.containerFound = false;
-        navDiagnostic.containerSelector = 'None';
-        navDiagnostic.linksDetectedCount = links.length;
-        navDiagnostic.linksList = [];
-        navDiagnostic.lastStatus = 'Scanning: Waiting for bottom bar mount';
+      if (!nav) {
+        // Clean up any stale attributes if bottom bar is no longer present (e.g. inside DMs)
+        cleanUpBottomNavigationStyles();
+        diagnostics.bottomNav.found = false;
+        diagnostics.bottomNav.selector = 'None';
+        diagnostics.bottomNav.tabsDetected = 0;
+        diagnostics.bottomNav.tabsList = [];
+        diagnostics.bottomNav.hiddenTabsCount = 0;
+        diagnostics.bottomNav.status = isDirectMessagesRoute()
+          ? 'Bypassed (In Direct Messages)'
+          : 'Scanning: Waiting for verified bottom bar';
         return;
       }
 
-      navDiagnostic.containerFound = true;
-      navDiagnostic.containerSelector = `<${row.tagName.toLowerCase()}${row.className ? ' class="' + String(row.className).split(' ')[0] + '"' : ''}>`;
-      navDiagnostic.linksDetectedCount = links.length;
-      navDiagnostic.linksList = links.map((l) => {
+      const { container, row, slots, links } = nav;
+
+      diagnostics.bottomNav.found = true;
+      diagnostics.bottomNav.selector = `<${container.tagName.toLowerCase()} class="${String(container.className || '').split(' ')[0]}">`;
+      diagnostics.bottomNav.tabsDetected = links.length;
+      diagnostics.bottomNav.tabsList = links.map((l) => {
         const href = l.getAttribute('href') || l.pathname || '';
         const aria = l.getAttribute('aria-label') || '';
-        return href ? href.replace(/^https?:\/\/[^\/]+/, '') : (aria || 'icon');
+        const svg = l.querySelector('svg')?.getAttribute('aria-label') || '';
+        return href ? href.replace(/^https?:\/\/[^\/]+/, '') : (aria || svg || 'tab');
       });
 
-      // 1. Tag and configure the row flex container
+      // Mark the verified bottom bar container
+      container.setAttribute('data-notinst-verified-bar', 'true');
+
+      // Tag and configure row flex container
       row.setAttribute('data-notinst-nav-row', 'true');
       row.style.setProperty('display', 'flex', 'important');
       row.style.setProperty('flex-direction', 'row', 'important');
@@ -819,98 +920,138 @@
 
       let hiddenCount = 0;
 
-      // 2. Configure each detected link and its slot wrapper
-      links.forEach((link) => {
-        link.setAttribute('data-notinst-nav-item', 'true');
-        link.style.setProperty('display', 'flex', 'important');
-        link.style.setProperty('justify-content', 'center', 'important');
-        link.style.setProperty('align-items', 'center', 'important');
-        link.style.setProperty('width', '100%', 'important');
-        link.style.setProperty('margin', '0 auto', 'important');
+      // Configure each detected slot and its link
+      slots.forEach((slot) => {
+        const link = slot.querySelector('a, div[role="link"], div[role="tab"]');
+        const href = link ? (link.getAttribute('href') || link.pathname || '').toLowerCase() : '';
+        const aria = link ? (link.getAttribute('aria-label') || '').toLowerCase() : '';
+        const svg = link?.querySelector('svg')?.getAttribute('aria-label')?.toLowerCase() || '';
 
-        const href = (link.getAttribute('href') || link.pathname || '').toLowerCase();
-        const aria = (link.getAttribute('aria-label') || '').toLowerCase();
+        const isReel = href.includes('/reels') || aria.includes('reels') || svg.includes('reels');
+        const isExplore =
+          (href === '/explore/' || href === '/explore' || aria === 'explore' || svg === 'explore') &&
+          !isExploreSearch(href);
 
-        // Detect if link is Direct / Messages
-        const isDM = href.includes('/direct') || aria.includes('direct') || aria.includes('message') || aria.includes('chat');
-        if (isDM) {
-          link.setAttribute('data-notinst-nav-dm', 'true');
-          const firstChild = link.firstElementChild;
-          if (firstChild) {
-            firstChild.style.setProperty('margin-left', 'auto', 'important');
-            firstChild.style.setProperty('margin-right', 'auto', 'important');
-          }
-        }
+        const shouldHide = (config.blockReels && isReel) || (config.blockExplore && isExplore);
 
-        // Trace up to the immediate slot wrapper under the row
-        let slot = link;
-        while (slot && slot.parentElement !== row) {
-          slot = slot.parentElement;
-        }
-
-        if (slot) {
+        if (shouldHide) {
+          slot.setAttribute('data-notinst-hidden-slot', 'true');
+          slot.style.setProperty('display', 'none', 'important');
+          slot.style.setProperty('flex', '0 0 0%', 'important');
+          slot.style.setProperty('width', '0', 'important');
+          hiddenCount++;
+        } else {
+          slot.removeAttribute('data-notinst-hidden-slot');
           slot.setAttribute('data-notinst-nav-slot', 'true');
+          slot.style.setProperty('display', 'flex', 'important');
+          slot.style.setProperty('flex', '1 1 0%', 'important');
+          slot.style.setProperty('justify-content', 'center', 'important');
+          slot.style.setProperty('align-items', 'center', 'important');
+          slot.style.setProperty('min-width', '0', 'important');
 
-          const isReel = href.includes('/reels') || aria.includes('reels');
-          const isExplore = href === '/explore/' || (href.startsWith('/explore') && !isExploreSearch(href));
-
-          if ((config.blockReels && isReel) || (config.blockExplore && isExplore)) {
-            // Blocked item: cleanly collapse the slot wrapper to 0 width
-            slot.setAttribute('data-notinst-hidden-slot', 'true');
-            slot.style.setProperty('display', 'none', 'important');
-            slot.style.setProperty('flex', '0 0 0%', 'important');
-            slot.style.setProperty('width', '0', 'important');
-            hiddenCount++;
-          } else {
-            // Active item: distribute evenly
-            slot.removeAttribute('data-notinst-hidden-slot');
-            slot.style.setProperty('display', 'flex', 'important');
-            slot.style.setProperty('flex', '1 1 0%', 'important');
-            slot.style.setProperty('justify-content', 'center', 'important');
-            slot.style.setProperty('align-items', 'center', 'important');
-            slot.style.setProperty('min-width', '0', 'important');
+          if (link) {
+            link.setAttribute('data-notinst-nav-item', 'true');
+            link.style.setProperty('display', 'flex', 'important');
+            link.style.setProperty('justify-content', 'center', 'important');
+            link.style.setProperty('align-items', 'center', 'important');
+            link.style.setProperty('width', '100%', 'important');
+            link.style.setProperty('margin', '0 auto', 'important');
           }
         }
       });
 
-      navDiagnostic.hiddenSlotsCount = hiddenCount;
-      navDiagnostic.lastStatus = `Success: Aligned ${links.length} tabs (${hiddenCount} hidden)`;
-      navDiagnostic.lastError = null;
+      diagnostics.bottomNav.hiddenTabsCount = hiddenCount;
+      diagnostics.bottomNav.status = `Verified: ${links.length} tabs (${hiddenCount} hidden)`;
+      diagnostics.lastError = null;
     } catch (err) {
-      navDiagnostic.lastStatus = 'Error in alignMobileNavigation';
-      navDiagnostic.lastError = err.message;
+      diagnostics.bottomNav.status = 'Error in alignMobileNavigation';
+      diagnostics.lastError = err.message;
     }
+  }
+
+  // ─── 8. Stories & Feed Diagnostics Scanner ────────────────────────────────
+  function scanStoriesAndFeed() {
+    const isDM = isDirectMessagesRoute();
+    diagnostics.isDMRoute = isDM;
+    diagnostics.currentPath = window.location.pathname;
+
+    if (isDM) {
+      diagnostics.currentRoute = 'Direct Messages';
+      diagnostics.stories.detected = false;
+      diagnostics.stories.count = 0;
+      diagnostics.stories.description = 'Bypassed in DMs';
+      return;
+    }
+
+    if (isFeedRoute()) {
+      diagnostics.currentRoute = 'Home (Feed)';
+    } else if (window.location.pathname.startsWith('/explore')) {
+      diagnostics.currentRoute = 'Explore / Search';
+    } else {
+      diagnostics.currentRoute = 'Page / Profile';
+    }
+
+    // Detect Stories tray on page
+    const storyLinks = document.querySelectorAll('a[href*="/stories/"]');
+    if (storyLinks.length > 0) {
+      diagnostics.stories.detected = true;
+      diagnostics.stories.count = storyLinks.length;
+      diagnostics.stories.description = `Preserved & Active (${storyLinks.length} items detected)`;
+    } else {
+      diagnostics.stories.detected = false;
+      diagnostics.stories.count = 0;
+      diagnostics.stories.description =
+        diagnostics.currentRoute === 'Home (Feed)'
+          ? 'None detected (tray may still be loading)'
+          : 'N/A on this route';
+    }
+
+    // Detect Feed articles
+    const articles = document.querySelectorAll('article');
+    diagnostics.feed.detected = articles.length > 0;
+    diagnostics.feed.articlesTotal = articles.length;
+
+    let suggestedCount = 0;
+    let sponsoredCount = 0;
+    articles.forEach((a) => {
+      const reason = a.getAttribute('data-notinst-filtered');
+      if (reason === 'suggested') suggestedCount++;
+      if (reason === 'sponsored') sponsoredCount++;
+    });
+    diagnostics.feed.suggestedFiltered = suggestedCount;
+    diagnostics.feed.sponsoredFiltered = sponsoredCount;
   }
 
   // Visual outline verification action
   function toggleNavigationHighlight() {
-    navDiagnostic.highlightActive = !navDiagnostic.highlightActive;
+    diagnostics.highlightActive = !diagnostics.highlightActive;
+    const bar = document.querySelector('[data-notinst-verified-bar="true"]');
     const row = document.querySelector('[data-notinst-nav-row="true"]');
     const slots = document.querySelectorAll('[data-notinst-nav-slot="true"]');
     const items = document.querySelectorAll('[data-notinst-nav-item="true"]');
 
-    if (navDiagnostic.highlightActive && row) {
+    if (diagnostics.highlightActive && row) {
+      if (bar) bar.style.setProperty('outline', '2px solid #60a5fa', 'important');
       row.style.setProperty('outline', '3px dashed #3b82f6', 'important');
       slots.forEach((s) => s.style.setProperty('outline', '2px solid #10b981', 'important'));
       items.forEach((it) => it.style.setProperty('background', 'rgba(59, 130, 246, 0.15)', 'important'));
 
-      // Automatically clear after 8 seconds if user doesn't toggle off
       setTimeout(() => {
-        if (navDiagnostic.highlightActive) {
+        if (diagnostics.highlightActive) {
           toggleNavigationHighlight();
         }
       }, 8000);
-    } else if (row) {
-      row.style.removeProperty('outline');
+    } else {
+      if (bar) bar.style.removeProperty('outline');
+      if (row) row.style.removeProperty('outline');
       slots.forEach((s) => s.style.removeProperty('outline'));
       items.forEach((it) => it.style.removeProperty('background'));
     }
 
-    // Refresh modal diagnostic UI
     renderDiagnosticsInModal();
   }
 
-  // ─── 7. In-Page Settings Badge & Control Modal ─────────────────────────────
+  // ─── 9. In-Page Settings Badge & Control Modal ─────────────────────────────
   function injectSettingsBadge() {
     if (!config.showSettingsButton) return;
     if (document.getElementById('notinst-settings-pill')) return;
@@ -927,6 +1068,8 @@
     const card = document.getElementById('notinst-modal-card');
     if (!card) return;
 
+    scanStoriesAndFeed();
+
     let diagBox = document.getElementById('notinst-modal-diag-box');
     if (!diagBox) {
       diagBox = document.createElement('div');
@@ -941,13 +1084,43 @@
     diagBox.innerHTML = `
       <h3>
         <span>🔍 Live DOM Diagnostics</span>
-        <span style="font-size:10px; color:${navDiagnostic.lastError ? '#f87171' : '#34d399'}; font-weight:normal;">
-          ${navDiagnostic.lastRunTime || 'Now'}
+        <span style="font-size:10px; color:${diagnostics.lastError ? '#f87171' : '#34d399'}; font-weight:normal;">
+          ${diagnostics.lastRunTime || 'Now'}
         </span>
       </h3>
       <div class="notinst-diag-row">
         <span>Userscript Version</span>
-        <span class="val">v${navDiagnostic.version}</span>
+        <span class="val">v${diagnostics.version}</span>
+      </div>
+      <div class="notinst-diag-row">
+        <span>Active Route</span>
+        <span class="val" style="color:${diagnostics.isDMRoute ? '#38bdf8' : '#e4e4e7'};">
+          ${diagnostics.currentRoute}
+        </span>
+      </div>
+      <div class="notinst-diag-row">
+        <span>Stories Tray</span>
+        <span class="val" style="color:${diagnostics.stories.detected ? '#4ade80' : '#a1a1aa'}">
+          ${diagnostics.stories.description}
+        </span>
+      </div>
+      <div class="notinst-diag-row">
+        <span>Main Feed</span>
+        <span class="val">
+          ${diagnostics.feed.articlesTotal} posts (${diagnostics.feed.suggestedFiltered} sug, ${diagnostics.feed.sponsoredFiltered} ad)
+        </span>
+      </div>
+      <div class="notinst-diag-row">
+        <span>Bottom Navigation</span>
+        <span class="val" style="color:${diagnostics.bottomNav.found ? '#4ade80' : '#f59e0b'}">
+          ${diagnostics.bottomNav.found ? 'Verified Fixed Bar' : diagnostics.bottomNav.status}
+        </span>
+      </div>
+      <div class="notinst-diag-row">
+        <span>Detected Tabs</span>
+        <span class="val">
+          ${diagnostics.bottomNav.tabsDetected > 0 ? diagnostics.bottomNav.tabsDetected + ' tabs (' + diagnostics.bottomNav.hiddenTabsCount + ' hidden)' : 'None'}
+        </span>
       </div>
       <div class="notinst-diag-row">
         <span>Clean Mobile UI</span>
@@ -955,35 +1128,15 @@
           ${isClean ? 'ENABLED' : 'DISABLED'}
         </span>
       </div>
-      <div class="notinst-diag-row">
-        <span>Injected Stylesheet</span>
-        <span class="val">${navDiagnostic.stylesheetExists ? 'Active' : 'Missing'}</span>
-      </div>
-      <div class="notinst-diag-row">
-        <span>Bottom Nav Container</span>
-        <span class="val" style="color:${navDiagnostic.containerFound ? '#4ade80' : '#f87171'}">
-          ${navDiagnostic.containerFound ? 'Found' : 'Not Found'}
-        </span>
-      </div>
-      <div class="notinst-diag-row">
-        <span>Detected Tabs</span>
-        <span class="val">${navDiagnostic.linksDetectedCount} tabs</span>
-      </div>
-      <div class="notinst-diag-row" style="margin-top:2px;">
-        <span>Tabs List</span>
-        <span class="val" title="${navDiagnostic.linksList.join(', ')}">
-          ${navDiagnostic.linksList.length > 0 ? navDiagnostic.linksList.join(', ') : 'None'}
-        </span>
-      </div>
       <div class="notinst-diag-row" style="margin-top:4px; padding-top:4px; border-top:1px solid #27272a;">
         <span>Status</span>
-        <span class="val" style="color:${navDiagnostic.lastError ? '#f87171' : '#38bdf8'}">
-          ${navDiagnostic.lastStatus}
+        <span class="val" style="color:${diagnostics.lastError ? '#f87171' : '#38bdf8'}">
+          ${diagnostics.bottomNav.status}
         </span>
       </div>
       <div style="margin-top:10px; display:flex; gap:6px;">
         <button id="notinst-diag-test-btn" type="button" class="notinst-btn-secondary" style="flex:1; padding:7px; font-size:11px;">
-          ${navDiagnostic.highlightActive ? '✖ Clear Highlights' : '🎯 Highlight Nav Elements'}
+          ${diagnostics.highlightActive ? '✖ Clear Highlights' : '🎯 Highlight Nav Elements'}
         </button>
       </div>
     `;
@@ -997,8 +1150,8 @@
   function openSettingsModal() {
     if (document.getElementById('notinst-modal-backdrop')) return;
 
-    // Run a fresh alignment check prior to rendering diagnostics
     alignMobileNavigation(document);
+    scanStoriesAndFeed();
 
     const modal = document.createElement('div');
     modal.id = 'notinst-modal-backdrop';
@@ -1013,7 +1166,7 @@
         <div class="notinst-toggle-row">
           <div>
             <div class="notinst-toggle-label">Clean Mobile UI</div>
-            <div class="notinst-toggle-desc">Evenly space & center bottom navigation tabs</div>
+            <div class="notinst-toggle-desc">Evenly space verified bottom navigation tabs</div>
           </div>
           <label class="notinst-switch">
             <input type="checkbox" id="notinst-set-clean-ui" ${config.cleanMobileUI ? 'checked' : ''}>
@@ -1107,13 +1260,13 @@
 
     modal.addEventListener('click', function (e) {
       if (e.target === modal) {
-        if (navDiagnostic.highlightActive) toggleNavigationHighlight();
+        if (diagnostics.highlightActive) toggleNavigationHighlight();
         modal.remove();
       }
     });
 
     modal.querySelector('#notinst-modal-save').addEventListener('click', function () {
-      if (navDiagnostic.highlightActive) toggleNavigationHighlight();
+      if (diagnostics.highlightActive) toggleNavigationHighlight();
       modal.remove();
     });
   }
@@ -1123,10 +1276,11 @@
     GM_registerMenuCommand('Configure Notinst Firewall', openSettingsModal);
   }
 
-  // ─── 8. Continuous Mutation Observer with AnimationFrame Throttle ──────────
+  // ─── 10. Continuous Mutation Observer with AnimationFrame Throttle ─────────
   applyDynamicStyles();
   alignMobileNavigation(document);
   filterFeedRecommendations(document);
+  scanStoriesAndFeed();
 
   let isScheduled = false;
   const observer = new MutationObserver(function () {
@@ -1137,6 +1291,7 @@
       applyDynamicStyles();
       alignMobileNavigation(document);
       filterFeedRecommendations(document);
+      scanStoriesAndFeed();
       injectSettingsBadge();
     });
   });
@@ -1151,9 +1306,11 @@
     document.addEventListener('DOMContentLoaded', function () {
       injectSettingsBadge();
       alignMobileNavigation(document);
+      scanStoriesAndFeed();
     });
   } else {
     injectSettingsBadge();
     alignMobileNavigation(document);
+    scanStoriesAndFeed();
   }
 })();
